@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 import importlib.resources
 
+from dotenv import load_dotenv
+
 # from fle.env.gym_env.run_eval import main as run_eval
 from fle.agents.data.sprites.download import download_sprites_from_hf, generate_sprites
 
@@ -51,6 +53,74 @@ def fle_eval(args):
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def _configure_inspect_eval(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> None:
+    """Resolve evaluation defaults after loading dotenv, preserving explicit CLI values."""
+    load_dotenv(override=False)
+
+    def environment_value(name: str) -> str | None:
+        return os.environ.get(name, "").strip() or None
+
+    explicit_selection = (
+        args.env_id is not None
+        or args.tasks is not None
+        or args.eval_set
+        or args.eval_set_file is not None
+        or args.task_type is not None
+    )
+    if not explicit_selection:
+        args.env_id = environment_value("FLE_ENV_ID")
+        args.tasks = environment_value("FLE_TASKS")
+        if args.env_id and args.tasks:
+            parser.error("Set either FLE_ENV_ID or FLE_TASKS, not both.")
+
+    if args.tasks is not None:
+        tasks = [task.strip() for task in args.tasks.split(",")]
+        if not all(tasks):
+            parser.error("--tasks / FLE_TASKS must contain non-empty task names.")
+        args.tasks = ",".join(tasks)
+    if args.env_id is not None:
+        args.env_id = args.env_id.strip()
+        if not args.env_id:
+            parser.error("--env-id must contain a task name.")
+    else:
+        # Do not let an environment default leak into explicitly selected modes.
+        os.environ.pop("FLE_ENV_ID", None)
+
+    args.task_type = args.task_type or "throughput"
+    for attribute, variable in (
+        ("model", "FLE_MODEL"),
+        ("reasoning_effort", "FLE_REASONING_EFFORT"),
+        ("trajectory_length", "FLE_TRAJECTORY_LENGTH"),
+        ("reasoning_tokens", "FLE_REASONING_TOKENS"),
+        ("max_tokens", "FLE_MAX_TOKENS"),
+        ("token_limit", "FLE_TOKEN_LIMIT"),
+    ):
+        value = getattr(args, attribute)
+        if value is None:
+            value = environment_value(variable)
+        if value is not None and attribute not in {"model", "reasoning_effort"}:
+            try:
+                value = int(value)
+                if value <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                parser.error(
+                    f"--{attribute.replace('_', '-')} / {variable} must be a positive integer."
+                )
+        setattr(args, attribute, value)
+
+    if args.reasoning_effort is not None and args.reasoning_effort not in {
+        "low",
+        "medium",
+        "high",
+    }:
+        parser.error(
+            "--reasoning-effort / FLE_REASONING_EFFORT must be low, medium, or high."
+        )
 
 
 def fle_inspect_eval(args):
@@ -205,6 +275,11 @@ def fle_inspect_eval(args):
 
         if hasattr(args, "reasoning_tokens") and args.reasoning_tokens:
             cmd.extend(["--reasoning-tokens", str(args.reasoning_tokens)])
+
+        if args.max_tokens is not None:
+            cmd.extend(["--max-tokens", str(args.max_tokens)])
+        if args.token_limit is not None:
+            cmd.extend(["--token-limit", str(args.token_limit)])
 
         if hasattr(args, "cache_prompt") and args.cache_prompt:
             cmd.extend(["--cache-prompt", "true"])
@@ -631,6 +706,11 @@ Examples:
         "--model", help="Model to use for evaluation (e.g., openai/gpt-4o-mini)"
     )
     parser_inspect.add_argument(
+        "--list-tasks",
+        action="store_true",
+        help="List built-in tasks without running an evaluation",
+    )
+    parser_inspect.add_argument(
         "--model-base-url",
         help="Base URL for the model API, passed through to inspect eval. "
         "Use with an openai-api/... model to target local or self-hosted "
@@ -690,6 +770,12 @@ Examples:
         help="Maximum reasoning tokens for reasoning models",
     )
     parser_inspect.add_argument(
+        "--max-tokens", type=int, help="Maximum output tokens per model response"
+    )
+    parser_inspect.add_argument(
+        "--token-limit", type=int, help="Total token limit per evaluation sample"
+    )
+    parser_inspect.add_argument(
         "--eval-set",
         action="store_true",
         help="Run multiple Factorio tasks as an evaluation set",
@@ -713,7 +799,7 @@ Examples:
     parser_inspect.add_argument(
         "--task-type",
         choices=["throughput", "unbounded"],
-        default="throughput",
+        default=None,
         help="Task type: 'throughput' for quota-based tasks, 'unbounded' for open-play (default: throughput)",
     )
     parser_inspect.add_argument(
@@ -772,6 +858,13 @@ Examples:
     )
 
     args = parser.parse_args()
+    if args.command == "inspect-eval":
+        if args.list_tasks:
+            from fle.eval.inspect.integration.eval_set import print_task_summary
+
+            print_task_summary()
+            return
+        _configure_inspect_eval(args, parser_inspect)
     if args.command:
         fle_init()
     if args.command == "cluster":

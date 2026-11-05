@@ -56,6 +56,57 @@ fle cluster start
 fle eval --config configs/gym_run_config.json
 ```
 
+### Inspect evaluation configuration
+
+`fle inspect-eval` accepts evaluation defaults from `.env`. Explicit CLI flags
+override environment variables; existing process variables override `.env`.
+Empty environment values are treated as unset. Without configuration, the
+existing evaluation defaults apply, including eight attempts and up to eight
+parallel connections.
+
+| Environment variable    | CLI flag              | Description                              |
+| ----------------------- | --------------------- | ---------------------------------------- |
+| `FLE_MODEL`             | `--model`             | Inspect provider/model identifier        |
+| `FLE_ENV_ID`            | `--env-id`            | Single task name                         |
+| `FLE_TASKS`             | `--tasks`             | Comma-separated task names               |
+| `FLE_TRAJECTORY_LENGTH` | `--trajectory-length` | Steps per trajectory                     |
+| `FLE_REASONING_EFFORT`  | `--reasoning-effort`  | `low`, `medium`, or `high`               |
+| `FLE_REASONING_TOKENS`  | `--reasoning-tokens`  | Reasoning budget, where supported        |
+| `FLE_MAX_TOKENS`        | `--max-tokens`        | Maximum output tokens per response       |
+| `FLE_TOKEN_LIMIT`       | `--token-limit`       | Total input and output tokens per sample |
+
+Numeric settings must be positive integers. The sample token limit includes
+repeated context and may stop a trajectory before its configured step count.
+Provider-specific model support and reasoning options are handled by Inspect.
+
+An example configuration for a single task:
+
+```dotenv
+FLE_MODEL=openai/<model-id>
+FLE_ENV_ID=steel_plate_throughput
+FLE_TRAJECTORY_LENGTH=16
+```
+
+Set the provider's API key, such as `OPENAI_API_KEY`, separately. A single-attempt
+run with one connection uses:
+
+```bash
+fle inspect-eval --epochs 1 --max-connections 1
+```
+
+For multiple tasks, replace `FLE_ENV_ID` with
+`FLE_TASKS=iron_ore_throughput,iron_plate_throughput`. Setting both environment
+selectors is an error unless a task selector or task mode is explicitly supplied
+on the command line. Explicit `--env-id`, `--tasks`, `--eval-set`,
+`--eval-set-file`, or `--task-type` selections bypass environment task defaults.
+
+List the built-in throughput and unbounded production tasks without starting
+Factorio or an evaluation:
+
+```bash
+fle inspect-eval --list-tasks
+```
+
 ## Environment
 
 FLE is an agent evaluation environment built on the game of Factorio, a popular resource management simulation game.
